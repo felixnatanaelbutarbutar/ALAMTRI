@@ -1,53 +1,139 @@
-# Spesifikasi UI
-Tujuan file ini: menetapkan layout, komponen, state dan bahasa dashboard.
-Dibaca oleh / kapan dipakai: agent frontend/desainer dan reviewer UAT sebelum M3.
+# Spesifikasi Desain Antarmuka Pengguna (UI)
+Tujuan file ini: menetapkan tata letak visual, wireframe ASCII per halaman, komponen split-viewer, token desain, dan teks persis Bahasa Indonesia.
+Dibaca oleh / kapan dipakai: tim frontend engineer, perancang UI/UX, dan QA visual saat mengimplementasikan Milestone M3.
 
 ## Prinsip dan design tokens
-**Usulan D-009.** UI Bahasa Indonesia, kode English. Banner detail: “Hasil pemeriksaan membantu peninjauan. Keputusan akhir dan otorisasi pembayaran berada pada pengguna berwenang PT SIS.” Sistem tidak membuat keputusan akhir dan tidak mengklaim fraud/pajak/hukum. Tidak ada tombol “Setujui otomatis” atau “Bayar”. Kata keputusan hanya pada formulir/riwayat **catatan manusia**, dibedakan dari badge sistem. Batas [PRD](PRD.md#out-of-scope) berlaku.
+**Berdasarkan Usulan D-009.**
+1. **Bahasa Antarmuka:** Seluruh label, tombol, pesan validasi, dan notifikasi menggunakan **Bahasa Indonesia** formal dan profesional. Kode program, nama field, dan endpoint tetap menggunakan English.
+2. **Banner Pengingat Tata Kelola Wajib:** Pada setiap halaman detail faktur (`/cases/:id`), sistem WAJIB menampilkan banner informatif di bagian atas:
+   > *"Hasil pemeriksaan sistem membantu peninjauan kesesuaian data. Keputusan akhir dan otorisasi pembayaran sepenuhnya wewenang pengguna berwenang PT SIS."*
+3. **Pemisahan Visual Status Sistem vs Keputusan Manusia:** Badge status sistem (`MATCHED`, `NEEDS_REVIEW`, `INCOMPLETE`, `DUPLICATE_SUSPECT`) menggunakan komponen visual terpisah dari badge catatan keputusan manusia (`ACCEPTED`, `REJECTED`, `NEEDS_CLARIFICATION`). DILARANG membuat tombol "Setujui Otomatis" atau "Bayar".
+4. **Kepatuhan Aksesibilitas WCAG 2.2 AA:** Kontras rasio teks terhadap latar belakang minimal 4.5:1 untuk teks biasa dan 3:1 untuk teks besar/badge. Seluruh aksi memiliki fokus visual dan dapat dinavigasi menggunakan keyboard.
 
-| Token | Nilai usulan | Pemakaian |
+### Tabel Design Tokens:
+| Token Desain | Nilai Kode (Hex / Tailwind) | Peruntukan & Keterangan |
 |---|---|---|
-| background / surface / text / muted | #F8FAFC / #FFFFFF / #0F172A / #475569 | Canvas, card, teks |
-| primary / focus | #1D4ED8 / #2563EB | Aksi dan fokus keyboard |
-| info / warning / danger | #1E40AF / #92400E / #991B1B | Status dengan ikon dan label, bukan warna saja |
-| font | system-ui, sans-serif; 14px tabel, 16px body, 24px judul | Line-height 1.5 |
-| spacing | 4,8,12,16,24,32px | Grid dan padding konsisten |
-| radius / border | 8px / 1px #CBD5E1 | Card/input |
-| target / focus ring | >=44px / 2px dengan offset 2px | Aksi sentuh/fokus |
-Kontras diuji WCAG AA; token yang gagal saat diterapkan harus disesuaikan dengan audit. Layout desktop sidebar 240px, content fluid; breakpoint usulan 768px collapse sidebar, detail stacked dengan tab Sumber/Data. Viewer tetap dapat dibuka keyboard.
+| `color-bg-canvas` | `#F8FAFC` (`slate-50`) | Latar belakang utama dashboard |
+| `color-bg-surface` | `#FFFFFF` (`white`) | Permukaan kartu, tabel, dan panel viewer |
+| `color-text-main` | `#0F172A` (`slate-900`) | Teks utama, judul, dan angka transaksi |
+| `color-text-muted` | `#475569` (`slate-600`) | Label keterangan dan teks bantuan |
+| `color-border` | `#CBD5E1` (`slate-300`) | Garis pembatas komponen dan input field |
+| `color-primary` | `#1D4ED8` (`blue-700`) | Tombol aksi utama, tab aktif, dan fokus ring |
+| `badge-matched` | Bg: `#DCFCE7`, Teks: `#15803D` (`green-700`) | Status validasi: Seluruh aturan cocok |
+| `badge-needs-review` | Bg: `#FEF9C3`, Teks: `#A16207` (`yellow-700`)| Status validasi: Ditemukan selisih data |
+| `badge-incomplete` | Bg: `#F1F5F9`, Teks: `#475569` (`slate-600`) | Status validasi: Data/dokumen belum lengkap |
+| `badge-duplicate` | Bg: `#FEE2E2`, Teks: `#B91C1C` (`red-700`) | Status validasi: Terindikasi potensi duplikasi |
+| `font-family` | Inter, system-ui, sans-serif | Tipografi modern yang mudah dibaca |
+| `min-touch-target` | `44px` x `44px` | Target interaksi klik/sentuh tombol |
+
+---
 
 ## Halaman dan tabel
-| Halaman / route UI | Pengguna | Komponen dan kolom |
-|---|---|---|
-| Masuk `/login` | Semua | Auth sesuai Q-008; error tanpa membocorkan akun |
-| Ringkasan `/dashboard` | S/P | Jumlah case per status pemrosesan dan validasi, tautan antrean; filter tanggal/vendor/status |
-| Case `/cases` | S/P | case_number, vendor hasil ekstraksi, tanggal unggah, halaman, processing_status, validation_status, keputusan manusia terakhir/run, aksi Buka; paginasi |
-| Unggah `/cases/new` | S/P | Buat case, file picker multi-file, baris status per file, progress dan retry; MIME/limit dari capabilities Q-002 |
-| Detail `/cases/:id` | S/P | Header status terpisah, tab Dokumen/Ekstraksi/Validasi/Keputusan; versi run terlihat |
-| Pengecualian `/exceptions` | S/P | severity, type, case_number, rule, umur, state, penanggung jawab; sort/filter dan bukti |
-| Ekspor `/exports` | S/P pemohon | Filter/case terpilih, format yang diaktifkan Q-003, status job, dibuat, expiry, unduh |
-| Pemakaian Credit `/credits` | A Managed | periode, kuota 50.000, terpakai, sisa, overage, estimasi biaya dasar/tambahan/total; riwayat periode |
-| Admin Pengguna `/admin/users` | A | nama,email,role,active,last updated; tambah/ubah/nonaktif, tanpa hapus histori |
-| Admin Parameter `/admin/rules` | A | code,versi,severity,parameter,aktif; edit existing parameter dengan alasan dan approval_reference; tidak ada tambah logic |
-| Jejak Sistem `/admin/audit` | A | waktu,aktor,aksi,jenis/id objek,request_id; filter dan detail metadata aman |
-| Operasi `/ops` | O | health komponen, job ID/status/attempt/kode failure; retry teknis tanpa data dokumen |
+
+### 1. Halaman Ringkasan & Antrean Kasus (`/cases`)
+- **Akses Peran:** STAFF, APPROVER.
+- **Wireframe ASCII:**
+```text
++----------------------------------------------------------------------------------------------------+
+|  [LOGO INaAI / PT SIS]  Dashboard    Kasus Faktur    Pengecualian    Ekspor    Kredit (Admin)   [User] |
++----------------------------------------------------------------------------------------------------+
+| Kasus Faktur                                                           [+ Unggah Bundel Faktur Baru] |
+|                                                                                                    |
+| Filter: [Status Validasi: Semua v] [Status Proses: Semua v] [Cari Vendor / No Faktur: ________]    |
+|----------------------------------------------------------------------------------------------------|
+| No. Kasus     | Vendor                | Tgl Unggah | Hal | Status Proses | Status Validasi | Aksi    |
+|---------------|-----------------------|------------|-----|---------------|-----------------|---------|
+| CAS-2026-0001 | PT UNITED TRACTORS    | 27/10/2026 |  4  | SELESAI       | [PERLU REVIEW]  | [Buka]  |
+| CAS-2026-0002 | PT TRAKTOR NUSANTARA  | 27/10/2026 |  2  | MEMPROSES     | [MEMPROSES]     | [Buka]  |
+| CAS-2026-0003 | PT HEXINDO ADIPERKASA | 26/10/2026 |  6  | SELESAI       | [COCOK]         | [Buka]  |
+| CAS-2026-0004 | CV MAKMUR JAYA        | 26/10/2026 |  1  | GAGAL         | [TIDAK LENGKAP] | [Buka]  |
+|----------------------------------------------------------------------------------------------------|
+| Menampilkan 1-10 dari 45 kasus                                          Halaman: [<] 1 [2] [3] [>] |
++----------------------------------------------------------------------------------------------------+
+```
+
+### 2. Halaman Antrean Pengecualian (`/exceptions`)
+- **Akses Peran:** STAFF, APPROVER.
+- **Kolom Tabel:** `Tingkat Keparahan (ERROR/WARN/INFO)`, `Tipe (MISMATCH/DUPLICATE/MISSING)`, `No. Kasus`, `Aturan Terlanggar`, `Ringkasan Selisih`, `Umur Antrean`, `Status (OPEN/IN_REVIEW/RESOLVED)`, `Aksi (Lihat Bukti)`.
+
+### 3. Halaman Pemantauan Kredit Managed (`/credits`)
+- **Akses Peran:** ADMIN (Pada deployment On-Premise, tautan menu ini disembunyikan otomatis).
+- **Wireframe ASCII:**
+```text
++----------------------------------------------------------------------------------------------------+
+| Pemantauan Pemakaian Kredit (Managed Subscription)                                                 |
+| Periode Aktif: Oktober 2026 (01/10/2026 - 31/10/2026)                                               |
+|----------------------------------------------------------------------------------------------------|
+| [ TOTAL KUOTA BULANAN ]      [ TOTAL KREDIT TERPAKAI ]      [ SISA KUOTA KREDIT ]      [ ESTIMASI BIAYA ]   |
+|      50.000 Kredit                 42.500 Kredit                 7.500 Kredit           IDR 50.000.000     |
+| (1 Kredit = 1 Halaman)           (85% Terpakai)              (Tambahan: IDR 0)        (Belum Termasuk PPN) |
+|----------------------------------------------------------------------------------------------------|
+| Progress Kuota: [==================================================>          ] 85%                |
+|                                                                                                    |
+| Riwayat Pemotongan Kredit Terakhir:                                                                |
+| Waktu (WIB)         | No. Kasus     | Dokumen           | Halaman | Kredit Terpotong | ID Event    |
+|---------------------|---------------|-------------------|---------|------------------|-------------|
+| 27/10/2026 14:32:01 | CAS-2026-0001 | Invoice_Final.pdf |    2    |     2 Kredit     | EVT-9812401 |
+| 27/10/2026 14:32:01 | CAS-2026-0001 | PO_Signed.pdf     |    2    |     2 Kredit     | EVT-9812402 |
++----------------------------------------------------------------------------------------------------+
+```
+
+---
 
 ## Viewer dan evidence
-Detail dua panel: kiri viewer halaman asli (zoom, previous/next, nomor halaman); kanan field terstruktur dan rule/exception. Setiap nilai tampil dengan tautan “Lihat sumber, halaman N” yang membuka document_id/page_number versi yang tepat dan highlight bbox bila ada. Evidence tidak memiliki bbox tetap menuju halaman. Tampilkan “Sumber tidak tersedia” untuk field null dengan alasan; tidak membuat halaman palsu. Validasi menampilkan semua result, reasoning singkat, perhitungan kode dan kedua sumber, bukan hanya overall badge. Dokumen dan hasil sensitif tidak disimpan browser storage/cache publik.
 
-Form keputusan hanya P manusia: select “Diterima (catatan pengguna)”, “Ditolak (catatan pengguna)”, “Perlu klarifikasi”; note wajib, run/version terikat dan konfirmasi “Simpan catatan keputusan”. Penjelas: “Catatan ini tidak menjalankan pembayaran.” Q-015 menentukan final vocabulary. Admin tidak melihat tombol ini karena role Admin saja tidak cukup. Run berubah -> nonaktifkan submit, tampilkan ajakan muat ulang, tidak mereset diam-diam. History menampilkan aktor,waktu,run,note,supersedes.
+Halaman Detail Kasus (`/cases/:id`) dirancang dengan antarmuka **Split-Screen Dua Panel** interaktif:
+
+```text
++----------------------------------------------------------------------------------------------------+
+| [Kembali ke Daftar]  Kasus #CAS-2026-0001   Status: [SELESAI]   Hasil Validasi: [PERLU REVIEW]     |
+| [!] Hasil pemeriksaan membantu peninjauan. Keputusan akhir dan otorisasi pembayaran berada pada    |
+|     pengguna berwenang PT SIS.                                                                     |
++------------------------------------------------------------------+---------------------------------+
+| PANEL KIRI: Dokumen Asli (PDF/Scan Viewer)                       | PANEL KANAN: Hasil & Validasi   |
+| [Invoice_UT.pdf v] [Hal: 1 / 4]  [Zoom - / +]  [Rotasi]          | [Tab: Validasi] [Tab: Dokumen]  |
+|------------------------------------------------------------------|---------------------------------|
+| +--------------------------------------------------------------+ | ATURAN VALIDASI (2 Selisih):    |
+| | PT UNITED TRACTORS TBK                    INVOICE            | |                                 |
+| | Jl. Raya Bekasi Km 22, Jakarta                               | | [!] VR-001: Total Nilai       |
+| |                                                              | | Status: GAGAL (Beda 10 jt)    |
+| | Nomor Faktur: INV/2026/10/0912          Tanggal: 25/10/2026  | | Invoice: IDR 110.000.000      |
+| | No. PO      : PO-SIS-2026-4401                               | | PO     : IDR 100.000.000      |
+| |                                                              | | [Lihat Bukti Hal. 1] (Klik)   |
+| | Rincian Barang:                                              | |                                 |
+| | 1. Hydraulic Filter PC2000 ... Qty: 10 ... IDR 100.000.000   | | [OK] VR-003: Kuantitas GR     |
+| |                                                              | | Status: COCOK (10 EA = 10 EA) |
+| | +----------------------------------------------------------+ | |                                 |
+| | | Subtotal  : IDR 100.000.000                              | | |---------------------------------|
+| | | PPN 11%   : IDR  11.000.000  << [KOTAK HIGHLIGHT EVIDENCE] | | CATATAN KEPUTUSAN REVIEW:     |
+| | | TOTAL     : IDR 110.000.000                              | | (Hanya Approver Berwenang)    |
+| | +----------------------------------------------------------+ | | Keputusan:                    |
+| +--------------------------------------------------------------+ | (o) Diterima (Catatan Pengguna) |
+|                                                                  | ( ) Ditolak (Catatan Pengguna)  |
+| [Navigasi Halaman]: [< Sebelumnya] [1] [2] [3] [4] [Berikutnya >]| ( ) Perlu Klarifikasi           |
+|                                                                  | Catatan Wajib:                  |
+|                                                                  | [Selisih 10 jt biaya kirim ... ]|
+|                                                                  | [ SIMPAN CATATAN KEPUTUSAN ]    |
++------------------------------------------------------------------+---------------------------------+
+```
+
+### Mekanisme Interaksi Evidence:
+1. Ketika pengguna mengklik tombol link `[Lihat Bukti Hal. N]` pada baris aturan validasi di panel kanan, panel kiri otomatis berpindah ke halaman dokumen terkait (`page_number`) dan menggambar kotak sorotan berwarna (`bbox highlight overlay`).
+2. Jika suatu field berstatus `null` (data tidak ditemukan pada dokumen asli), panel kanan menampilkan label netral: *"Sumber tidak tersedia pada dokumen"* tanpa menciptakan tautan palsu.
+3. Form keputusan manusia di panel kanan bawah hanya aktif jika pengguna memiliki peran `APPROVER`. Kolom catatan (`note`) wajib diisi minimal 5 karakter sebelum tombol submit aktif.
+
+---
 
 ## State wajib
-| State | Perilaku |
-|---|---|
-| Loading | Skeleton pada tabel, aria-busy, jangan tampil nol pemakaian sebelum data termuat |
-| Empty | “Belum ada case. Unggah dokumen untuk memulai.”; rule kosong “Kriteria belum dikonfigurasi”, bukan MATCHED |
-| Processing | Tahap dan job ID aman; polling, jangan menjanjikan waktu tanpa Q-009 |
-| Error | Pesan aman + request_id dan retry; input tidak hilang; tidak menampilkan stack/model output |
-| Partial upload | Status tiap file; retry hanya file gagal dengan key yang sama untuk retry request identik |
-| Forbidden | Tampilkan halaman tidak diizinkan; data objek tidak ikut termuat |
-| Stale version | “Hasil telah berubah. Muat ulang untuk meninjau versi terbaru.” |
-| Credit disabled | onprem sembunyikan menu/widget/notifikasi kuota; deep link menampilkan fitur tidak berlaku |
-| Quota exhausted | Banner netral dengan overage dan tarif; upload/proses tetap tersedia |
-| Export expired | “Berkas ekspor kedaluwarsa. Buat ekspor baru.” |
-Microcopy kuota di [UX](UX.md); API/RBAC [API_CONTRACT](API_CONTRACT.md); uji visual dan acceptance [TESTING](TESTING.md), [ACCEPTANCE](ACCEPTANCE.md).
+
+Setiap komponen dan halaman web WAJIB menangani kondisi antarmuka berikut dengan elegan:
+
+| Kondisi (State) | Tampilan Komponen & Perilaku Antarmuka | Microcopy / Teks Persis Bahasa Indonesia |
+|---|---|---|
+| **Loading** | Menampilkan animasi skeleton placeholder pada tabel dan viewer; atribut `aria-busy="true"` aktif. | *"Memuat data dokumen..."* |
+| **Empty Table** | Menampilkan ilustrasi folder kosong dengan tombol aksi panduan. | *"Belum ada kasus faktur yang diproses. Unggah bundel dokumen baru untuk memulai."* |
+| **Partial Upload** | Menampilkan daftar berkas dengan status individual; tombol retry tersedia khusus untuk berkas yang gagal. | *"3 dari 4 berkas berhasil diunggah. 1 berkas gagal diverifikasi."* |
+| **Error Network** | Menampilkan kartu peringatan merah dengan ID pelacakan request. | *"Gagal terhubung ke server. Silakan coba kembali atau hubungi dukungan dengan menyertakan ID: {request_id}"* |
+| **Stale Version** | Menonaktifkan form submit dan menampilkan baris peringatan kuning jika hasil validasi telah diperbarui run lain. | *"Hasil validasi telah diperbarui oleh proses terbaru. Silakan muat ulang halaman sebelum mencatat keputusan."* |
+| **Quota Exhausted** | Banner peringatan informatif berwarna kuning di bagian atas dashboard (Managed). Proses unggah dan validasi **tetap berfungsi normal**. | *"Kuota 50.000 kredit bulanan telah tercapai. Pemrosesan dokumen tetap berjalan normal dengan biaya pemakaian tambahan IDR 500 / kredit."* |
+| **Feature Disabled**| Pada deployment On-Premise, menu pemantauan kredit dihilangkan; jika user membuka URL langsung, tampilkan: | *"Fitur pemantauan kredit dinonaktifkan pada skema On-Premise."* |

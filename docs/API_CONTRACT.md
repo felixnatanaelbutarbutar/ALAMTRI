@@ -1,101 +1,262 @@
 # Kontrak REST API
-Tujuan file ini: mendefinisikan endpoint, schema, akses dan perilaku error yang dapat diuji.
-Dibaca oleh / kapan dipakai: agent API/frontend dan pembuat contract test sebelum implementasi.
+Tujuan file ini: menetapkan spesifikasi REST API, otorisasi peran, skema JSON, katalog kode error terpusat, dan spesifikasi OpenAPI 3.1.
+Dibaca oleh / kapan dipakai: tim pengembang backend, frontend developer, dan QA engineer saat membangun integrasi dan automated contract testing.
 
 ## Konvensi kontrak
-**Usulan D-009/D-013**, base `/api/v1`, UTF-8 JSON kecuali multipart/file. Token dari AuthProvider; login produksi Q-008. UUID/ISO-8601 UTC; nilai uang/qty berupa decimal string, bukan float; nullable eksplisit. Seluruh enum/field entitas mengikuti [DATA_MODEL](DATA_MODEL.md); schema ringkas di bawah adalah normatif, `?` opsional/nullable, `[]` array, field tidak dikenal ditolak 422. OpenAPI pada implementasi harus mengembangkan seluruh referensi schema, bukan membiarkan tipe any.
+**Berdasarkan Usulan D-009/D-013.** Base path seluruh API: `/api/v1`.
+1. **Format Payload & Encoding:** Seluruh permintaan dan respons menggunakan format JSON (`application/json; charset=utf-8`), kecuali endpoint unggah berkas (`multipart/form-data`) dan unduh berkas (`application/octet-stream`).
+2. **Autentikasi & Konteks Pengguna:** Melalui header `Authorization: Bearer <token>`. Seluruh data difilter otomatis berdasarkan `tenant_id` dari subjek token terverifikasi.
+3. **Format Angka & Finansial:** Seluruh nilai mata uang dan kuantitas WAJIB dikirimkan sebagai **Decimal String** (misal: `"1000000.000000"`), DILARANG mengirim angka desimal mentah (float) untuk mencegah kehilangan presisi.
+4. **Idempotensi Mutasi:** Seluruh request mutasi (`POST`, `PATCH`, `DELETE`) WAJIB menyertakan header `Idempotency-Key: <UUID>`. Pengiriman ulang dengan key dan payload yang sama mengembalikan respons awal; pengiriman ulang dengan key sama namun payload berbeda mengembalikan 409 `IDEMPOTENCY_CONFLICT`.
+5. **Paginasi Standar:** Seluruh list endpoint mendukung query param: `page` (default: 1, min: 1) dan `page_size` (default: 25, min: 1, max: 100). Envelope list:
+   ```json
+   {
+     "items": [],
+     "page": 1,
+     "page_size": 25,
+     "total_items": 120,
+     "total_pages": 5
+   }
+   ```
+6. **Perilaku Per Deployment Mode:** Pada mode `DEPLOYMENT_MODE=onprem`, seluruh endpoint grup `/credits/*` dan notifikasi kuota menghasilkan respons HTTP 404 dengan kode error `FEATURE_DISABLED`.
 
-Akses: S=STAFF, P=APPROVER, A=ADMIN, O=OPS. S/P akses Finance dalam tenant dan scope case Q-008. A tidak mewarisi hak keputusan, O hanya health/job metadata tersanitasi. Semua resource tenant-scoped, pemeriksaan objek di server. Forbidden lintas tenant memberi 404, role salah dalam tenant memberi 403. Role tidak boleh dipilih dari body/token tak tervalidasi.
-
-Mutasi menerima `Idempotency-Key` wajib (termasuk multipart, decision, export, reprocess, admin); retry actor+route+key+payload sama mengembalikan hasil awal, payload berbeda 409 IDEMPOTENCY_CONFLICT. Identitas ini bukan keputusan komersial billable. PATCH memakai `If-Match` version, konflik 409 STALE_VERSION. Pagination semua list: `page`>=1 default 1, `page_size` 1..100 default 25 (usulan teknis), envelope `{items:[],page,page_size,total}`; order stabil `created_at,id`. Query tak dikenal 422. Envelope single `{data:Resource,request_id:uuid}`; 202 berisi job_id dan status_url. Tidak ada endpoint approval otomatis, ERP, pembayaran, vendors master atau pembuatan rule logic.
+---
 
 ## Schema sumber daya
-| Nama | Field wajib / opsional |
-|---|---|
-| User | id:uuid,name:string,email:string,role:enum,active:boolean,version:int |
-| Case | id:uuid,case_number:string,processing_status:enum,validation_status:enum/null,total_pages:int,current_run_id:uuid/null,version:int,created_at:timestamp |
-| Document | id:uuid,case_id:uuid,doc_type:enum,filename:string,mime_type:string,page_count:int,state:enum,sha256:string,error_code:string/null,extraction:Extraction/null |
-| Extraction | id:uuid,model_id:string,prompt_version:string,schema_version:string,header:Header,line_items:LineItem[],evidence:Evidence[],quality_flags:string[] |
-| Header / LineItem | Seluruh field doc_headers/doc_line_items di DATA_MODEL kecuali tenant/DB metadata; numeric -> decimal string/null; references_json -> references {po,dn,gr,bast:string/null} |
-| Evidence | id:uuid,extraction_id:uuid,document_id:uuid,page_number:int,field_path:string,value:JSON scalar/null,bbox:number[4]/null |
-| Validation | id:uuid,case_id:uuid,status:enum,overall_status:enum/null,rules_snapshot:{code,rule_version,params}[],extraction_ids:uuid[],results:Result[],finished_at:timestamp/null |
-| Result | id:uuid,rule_code:string,rule_version:int,outcome:enum,reason_code:string,reasoning:string,computed_values:object scalar decimal strings,evidence:Evidence[] |
-| Exception | id:uuid,case_id:uuid,run_id:uuid,result_id:uuid,type:enum,severity:enum,state:enum,summary:string,assigned_to:uuid/null,created_at:timestamp,version:int |
-| Decision | id:uuid,case_id:uuid,run_id:uuid,decided_by:uuid,decision:enum,note:string,supersedes_id:uuid/null,decided_at:timestamp |
-| Job | id:uuid,status:enum,attempt:int,failure_code:string/null,created_at:timestamp,completed_at:timestamp/null |
-| Export | id:uuid,status:enum,format:CSV/XLSX,run_ids:uuid[],expires_at:timestamp/null,download_url:string/null |
-| CreditSummary | period_key:string,starts_at:timestamp,ends_at:timestamp,quota:int,used:int,remaining:int,overage:int,estimated_base_idr:string,estimated_additional_idr:string,estimated_total_idr:string,state:OPEN/CLOSED,policy_version:string |
-| Notification | id:uuid,period_key:string,type:enum,read_at:timestamp/null,created_at:timestamp |
-| Rule | id:uuid,code:string,rule_version:int,params:object,active:boolean,severity:enum,description:string |
-| AuditEntry | id:uuid,actor_id:uuid/null,actor_type:enum,action:string,entity_type:string,entity_id:uuid/null,metadata:allowlisted object,occurred_at:timestamp,request_id:uuid |
-Case detail ajoute `documents:Document[]`, `latest_decision:Decision/null`. Document extraction harus versi aktif; riwayat dapat dipilih `extraction_id` yang sah. Tidak pernah mengekspos object_key, password_hash, secret atau raw model input. `computed_values` keys ditetapkan per rule di schema konfigurasi, bukan arbitrary log payload.
+
+### User
+```json
+{
+  "id": "11111111-1111-4000-8000-111111111111",
+  "subject": "usr_sis_staff01",
+  "name": "Budi Santoso",
+  "email": "budi.santoso@sis.co.id",
+  "role": "STAFF",
+  "active": true,
+  "version": 1,
+  "created_at": "2026-10-27T08:00:00Z"
+}
+```
+
+### Case & Case Detail
+```json
+{
+  "id": "22222222-2222-4000-8000-222222222222",
+  "case_number": "CAS-2026-0001",
+  "processing_status": "VALIDATED",
+  "validation_status": "NEEDS_REVIEW",
+  "total_pages": 4,
+  "current_run_id": "33333333-3333-4000-8000-333333333333",
+  "version": 2,
+  "created_at": "2026-10-27T08:30:00Z",
+  "documents": [],
+  "latest_decision": null
+}
+```
+
+### Evidence
+```json
+{
+  "id": "44444444-4444-4000-8000-444444444444",
+  "extraction_id": "55555555-5555-4000-8000-555555555555",
+  "document_id": "66666666-6666-4000-8000-666666666666",
+  "page_number": 1,
+  "field_path": "total_amount",
+  "value": "110000000.000000",
+  "bbox": [0.72, 0.85, 0.91, 0.88]
+}
+```
+
+---
 
 ## Endpoint identitas dan konfigurasi
-| Method/path | RBAC | Request | Response |
-|---|---|---|---|
-| POST `/auth/login` | Publik terbatas rate limit, adapter lokal dev saja | {email:string,password:string} | 200 {access_token:string,token_type:Bearer,expires_in:int}; mode produksi nonlokal 404 FEATURE_DISABLED |
-| POST `/auth/logout` | S/P/A/O | {} | 200 {logged_out:true}; revoke session/token sesuai adapter |
-| GET `/auth/me` | S/P/A/O | — | 200 User |
-| GET `/capabilities` | S/P/A/O | — | 200 {deployment_mode:managed/onprem,credit_enabled:bool,export_formats:string[],upload_limits:{max_bytes:int,max_pages:int,mime_types:string[]},policy_ready:bool} |
-SSO flow via adapter AuthProvider; URL/callback/issuer contract ditetapkan sesudah Q-008, jangan membuat konektor sistem bisnis internal. Password tidak masuk audit/log.
+
+| Endpoint | Method | Role | Header Wajib | Request Body | Response (Sukses) | Error Codes |
+|---|:---:|:---:|---|---|---|---|
+| `API-AUTH-01: /auth/login` | `POST` | Publik | None | `{"email": "string", "password": "string"}` | `200 OK` `{"access_token": "string", "token_type": "Bearer", "expires_in": 3600}` | `INVALID_CREDENTIALS`, `ACCOUNT_DISABLED`, `FEATURE_DISABLED` (pada mode SSO produksi) |
+| `API-AUTH-02: /auth/logout` | `POST` | All | `Authorization` | `{}` | `200 OK` `{"logged_out": true}` | `UNAUTHENTICATED` |
+| `API-AUTH-03: /auth/me` | `GET` | All | `Authorization` | None | `200 OK` Resource `User` | `UNAUTHENTICATED`, `USER_NOT_FOUND` |
+| `API-CAP-01: /capabilities` | `GET` | All | `Authorization` | None | `200 OK` `{"deployment_mode": "managed", "credit_enabled": true, "export_formats": ["CSV", "XLSX"], "upload_limits": {"max_bytes": 52428800, "max_pages": 150, "mime_types": ["application/pdf", "image/png", "image/jpeg"]}}` | `UNAUTHENTICATED` |
+
+---
 
 ## Case, dokumen dan job
-| Method/path | RBAC | Request | Response |
-|---|---|---|---|
-| POST `/cases` | S/P | {} | 201 Case; case_number server generated |
-| GET `/cases` | S/P | filter processing_status,validation_status,date_from,date_to,vendor_query; sort created_at/-created_at | 200 paged Case |
-| GET `/cases/{id}` | S/P | — | 200 Case detail |
-| POST `/cases/{id}/documents` | S/P | multipart `file` satu file/request, `doc_type` hint opsional | 202 {document_id,job_id,status_url}; file banyak memakai request per file |
-| GET `/documents/{id}` | S/P | extraction_id? | 200 Document |
-| GET `/documents/{id}/pages/{n}/image` | S/P | n integer>=1 | 200 image/png; Cache-Control private,no-store; halaman di luar range 404 |
-| GET `/jobs/{id}` | S/P; O sanitized | — | 200 Job; hanya job dari resource yang diizinkan |
-| POST `/cases/{id}/reprocess` | S/P | {expected_version:int,reason:string} | 202 {job_id,status_url}; policy billable Q-011, 409 POLICY_UNRESOLVED bila belum diputuskan |
-No hard delete sampai Q-005. Upload limit/MIME Q-002; inspect magic bytes, malware quarantine, PDF password/malformed 422 UNREADABLE_DOCUMENT; konten tidak aman 422 UNSAFE_FILE. Kebijakan file campuran Q-006, tidak membagi otomatis tanpa persetujuan. Model failure tidak membuang dokumen; retry job sama tidak membuat upload baru. Status polling GET, tanpa kewajiban websocket.
+
+| Endpoint | Method | Role | Header Wajib | Query / Request Body | Response (Sukses) | Error Codes |
+|---|:---:|:---:|---|---|---|---|
+| `API-CASE-01: /cases` | `POST` | STAFF, APPROVER | `Authorization`, `Idempotency-Key` | `{}` | `201 Created` Resource `Case` | `IDEMPOTENCY_CONFLICT` |
+| `API-CASE-02: /cases` | `GET` | STAFF, APPROVER | `Authorization` | `page`, `page_size`, `processing_status`, `validation_status`, `vendor_query`, `date_from`, `date_to` | `200 OK` Paged List of `Case` | `INVALID_FILTER_PARAMS` |
+| `API-CASE-03: /cases/{id}` | `GET` | STAFF, APPROVER | `Authorization` | Path: `id` (UUID) | `200 OK` Resource `Case Detail` | `CASE_NOT_FOUND` |
+| `API-DOC-01: /cases/{id}/documents` | `POST` | STAFF, APPROVER | `Authorization`, `Idempotency-Key` | Multipart: `file` (binary), `doc_type` (hint enum opsional) | `202 Accepted` `{"document_id": "UUID", "job_id": "UUID", "status_url": "/api/v1/jobs/{job_id}"}` | `FILE_TOO_LARGE`, `UNSUPPORTED_MEDIA`, `UNREADABLE_DOCUMENT`, `UNSAFE_FILE`, `PAGE_LIMIT_EXCEEDED` |
+| `API-DOC-02: /documents/{id}` | `GET` | STAFF, APPROVER | `Authorization` | Path: `id` (UUID), Query: `extraction_id` (opsional) | `200 OK` Resource `Document` + `Extraction` | `DOCUMENT_NOT_FOUND` |
+| `API-DOC-03: /documents/{id}/pages/{n}/image` | `GET` | STAFF, APPROVER | `Authorization` | Path: `id`, `n` (halaman >= 1) | `200 OK` Binary `image/png` (`Cache-Control: private, no-store`) | `PAGE_NOT_FOUND`, `IMAGE_RENDER_FAILED` |
+| `API-JOB-01: /jobs/{id}` | `GET` | STAFF, APPROVER, OPS | `Authorization` | Path: `id` (UUID) | `200 OK` Resource `Job` (OPS menerima metadata tersanitasi tanpa dokumen) | `JOB_NOT_FOUND` |
+| `API-REP-01: /cases/{id}/reprocess` | `POST` | STAFF, APPROVER | `Authorization`, `Idempotency-Key` | `{"expected_version": 2, "reason": "Pembaruan dokumen"}` | `202 Accepted` `{"job_id": "UUID", "status_url": "/api/v1/jobs/{job_id}"}` | `STALE_VERSION`, `INVALID_STATE`, `POLICY_UNRESOLVED` |
+
+---
 
 ## Validasi dan review
-| Method/path | RBAC | Request | Response |
-|---|---|---|---|
-| GET `/cases/{id}/validation` | S/P | run_id? default current | 200 Validation; belum ada run 200 {data:null,request_id} |
-| GET `/exceptions` | S/P | state,type,severity,case_id; sort severity/-created_at | 200 paged Exception |
-| PATCH `/exceptions/{id}` | S/P | {state:enum,assigned_to:uuid/null,expected_version:int}; tidak mengubah severity | 200 Exception; audit perubahan |
-| POST `/cases/{id}/decisions` | P manusia | {run_id:uuid,expected_case_version:int,decision:enum,note:string,supersedes_id:uuid/null} | 201 Decision |
-| GET `/cases/{id}/decisions` | S/P | — | 200 paged Decision |
-Run harus selesai dan current; run stale 409 STALE_RUN, processing 409 INVALID_STATE. Note nonempty, escaped saat render. Keputusan tersimpan append-only bersama audit dalam satu transaksi. System/service token selalu 403 HUMAN_REQUIRED bahkan bila mengklaim role. Perubahan keputusan sesuai Q-015 dan tidak mengeksekusi pembayaran. PATCH exception RESOLVED tidak menghasilkan decision.
+
+| Endpoint | Method | Role | Header Wajib | Request Body | Response (Sukses) | Error Codes |
+|---|:---:|:---:|---|---|---|---|
+| `API-VAL-01: /cases/{id}/validation` | `GET` | STAFF, APPROVER | `Authorization` | Path: `id`, Query: `run_id` (opsional) | `200 OK` Resource `Validation` (Run, Results, Evidence) | `CASE_NOT_FOUND`, `RUN_NOT_FOUND` |
+| `API-EXC-01: /exceptions` | `GET` | STAFF, APPROVER | `Authorization` | Query: `page`, `page_size`, `case_id`, `state`, `severity`, `type` | `200 OK` Paged List of `Exception` (Urut: severity, umur FIFO) | `INVALID_FILTER_PARAMS` |
+| `API-EXC-02: /exceptions/{id}` | `PATCH` | STAFF, APPROVER | `Authorization`, `Idempotency-Key` | `{"state": "IN_REVIEW", "assigned_to": "UUID", "expected_version": 1}` | `200 OK` Resource `Exception` | `EXCEPTION_NOT_FOUND`, `STALE_VERSION` |
+| `API-DEC-01: /cases/{id}/decisions` | `POST` | APPROVER (Hanya Manusia) | `Authorization`, `Idempotency-Key` | `{"run_id": "UUID", "expected_case_version": 2, "decision": "NEEDS_CLARIFICATION", "note": "Klarifikasi harga", "supersedes_id": null}` | `201 Created` Resource `Decision` | `HUMAN_REQUIRED`, `STALE_RUN`, `STALE_VERSION`, `INVALID_DECISION_VOCAB` |
+| `API-DEC-02: /cases/{id}/decisions` | `GET` | STAFF, APPROVER | `Authorization` | Path: `id` | `200 OK` Paged List of `Decision` (Riwayat keputusan manusia) | `CASE_NOT_FOUND` |
+
+*Catatan Kritis Otorisasi Keputusan:* Endpoint `POST /cases/{id}/decisions` menolak keras token sistem, service worker, atau peran non-APPROVER dengan HTTP 403 `HUMAN_REQUIRED`.
+
+---
 
 ## Export, credit dan notifikasi
-| Method/path | RBAC | Request | Response |
-|---|---|---|---|
-| POST `/exports` | S/P | {case_ids:uuid[],format:CSV/XLSX}; kandidat format Q-003 | 202 {export_id,job_id,status_url}; seluruh case harus authorized, snapshot current run IDs |
-| GET `/exports/{id}` | Pemohon S/P | — | 200 Export; download_url berupa same-origin `/api/v1/exports/{id}/download` bila READY |
-| GET `/exports/{id}/download` | Pemohon S/P | — | 200 file, attachment, no-store; expired 410 EXPORT_EXPIRED |
-| GET `/credits/current` | A | — | 200 CreditSummary |
-| GET `/credits/history` | A | period_from?,period_to? | 200 paged CreditSummary |
-| GET `/notifications` | A, recipient sendiri | unread? | 200 paged Notification |
-| POST `/notifications/{id}/read` | A recipient | {} | 200 Notification |
-Onprem: seluruh `/credits/*` dan quota `/notifications*` 404 FEATURE_DISABLED, tidak membuat ledger/quota notification; page_count statistik tetap ada. Managed: overage tidak memberi 402/429 karena kuota. 429 hanya rate/security/capacity dengan retry-after, tidak dipicu credit. Billing summary formula [OPERATIONS](OPERATIONS.md), bukan invoice pembayaran; policy unresolved memberi 409 POLICY_UNRESOLVED untuk operasi billable produksi. Export field/format final Q-003, expiry Q-005; CSV formula injection ditangani.
+
+| Endpoint | Method | Role | Header Wajib | Request Body | Response (Sukses) | Error Codes |
+|---|:---:|:---:|---|---|---|---|
+| `API-EXP-01: /exports` | `POST` | STAFF, APPROVER | `Authorization`, `Idempotency-Key` | `{"case_ids": ["UUID"], "format": "CSV"}` | `202 Accepted` `{"export_id": "UUID", "job_id": "UUID", "status_url": "/api/v1/jobs/{job_id}"}` | `UNAUTHORIZED_CASES`, `UNSUPPORTED_FORMAT` |
+| `API-EXP-02: /exports/{id}` | `GET` | Pemohon S/P | `Authorization` | Path: `id` | `200 OK` Resource `Export` (`download_url` saat READY) | `EXPORT_NOT_FOUND`, `FORBIDDEN` |
+| `API-EXP-03: /exports/{id}/download` | `GET` | Pemohon S/P | `Authorization` | Path: `id` | `200 OK` Binary File Attachment (`no-store`) | `EXPORT_EXPIRED`, `EXPORT_NOT_READY` |
+| `API-CRD-01: /credits/current` | `GET` | ADMIN (Managed) | `Authorization` | None | `200 OK` Resource `CreditSummary` (quota, used, remaining, overage, biaya) | `FEATURE_DISABLED` (pada onprem) |
+| `API-CRD-02: /credits/history` | `GET` | ADMIN (Managed) | `Authorization` | Query: `page`, `page_size`, `period_from`, `period_to` | `200 OK` Paged List of `CreditSummary` | `FEATURE_DISABLED` (pada onprem) |
+| `API-NOT-01: /notifications` | `GET` | ADMIN (Managed) | `Authorization` | Query: `unread_only` (bool) | `200 OK` Paged List of `Notification` | `FEATURE_DISABLED` (pada onprem) |
+| `API-NOT-02: /notifications/{id}/read` | `POST` | ADMIN (Managed) | `Authorization` | Path: `id` | `200 OK` Resource `Notification` | `NOTIF_NOT_FOUND` |
+
+---
 
 ## Admin dan operasi
-| Method/path | RBAC | Request | Response |
-|---|---|---|---|
-| GET `/admin/users` | A | role?,active? | 200 paged User |
-| POST `/admin/users` | A | {subject,name,email,role,active} | 201 User; password provision lewat auth adapter |
-| PATCH `/admin/users/{id}` | A | {name?,role?,active?,expected_version:int} | 200 User; subject immutable; cegah menonaktifkan Admin aktif terakhir |
-| GET `/admin/rules` | A | code?,active? | 200 paged Rule |
-| PATCH `/admin/rules/{id}/params` | A | {params:typed rule params,expected_rule_version:int,reason:string,approval_reference:string} | 201 Rule versi baru; schema param/range disepakati Q-001; logic/code/active tak boleh lewat body |
-| GET `/admin/audit` | A | action?,entity_id?,date_from?,date_to? | 200 paged AuditEntry |
-| GET `/ops/health` | O | — | 200 {api:UP/DOWN,db:UP/DOWN,queue:UP/DOWN,storage:UP/DOWN,model:UP/DOWN} atau 503 |
-| GET `/ops/jobs` | O | status?,kind? | 200 paged Job, tanpa filename/data finansial |
-| POST `/ops/jobs/{id}/retry` | O | {reason:string,expected_attempt:int} | 202 Job; hanya failure teknis, run versioned dan ledger event sama |
-Rule baru dan aktivasi logic melalui CR/release, bukan endpoint CRUD rule. Ops tidak menulis review_decisions. Semua write dan akses sensitif dicatat sesuai [AUDIT](AUDIT.md).
+
+| Endpoint | Method | Role | Header Wajib | Request Body | Response (Sukses) | Error Codes |
+|---|:---:|:---:|---|---|---|---|
+| `API-ADM-01: /admin/users` | `GET` | ADMIN | `Authorization` | Query: `role`, `active`, `page` | `200 OK` Paged List of `User` | `FORBIDDEN` |
+| `API-ADM-02: /admin/users` | `POST` | ADMIN | `Authorization`, `Idempotency-Key` | `{"subject": "str", "name": "str", "email": "str", "role": "STAFF", "active": true}` | `201 Created` Resource `User` | `EMAIL_ALREADY_EXISTS`, `INVALID_ROLE` |
+| `API-ADM-03: /admin/users/{id}` | `PATCH` | ADMIN | `Authorization`, `Idempotency-Key` | `{"role": "APPROVER", "active": true, "expected_version": 1}` | `200 OK` Resource `User` | `USER_NOT_FOUND`, `STALE_VERSION`, `CANNOT_DISABLE_LAST_ADMIN` |
+| `API-ADM-04: /admin/rules` | `GET` | ADMIN | `Authorization` | Query: `code`, `active` | `200 OK` Paged List of `ValidationRule` | `FORBIDDEN` |
+| `API-ADM-05: /admin/rules/{id}/params` | `PATCH` | ADMIN | `Authorization`, `Idempotency-Key` | `{"params": {"total_amount_tolerance": "0.00"}, "expected_rule_version": 1, "reason": "Penyesuaian toleransi", "approval_reference": "CR-2026-001"}` | `201 Created` Versi baru Resource `ValidationRule` | `RULE_NOT_FOUND`, `STALE_RULE_VERSION`, `INVALID_RULE_PARAMS` |
+| `API-ADM-06: /admin/audit` | `GET` | ADMIN | `Authorization` | Query: `action`, `date_from`, `date_to`, `actor_id` | `200 OK` Paged List of `AuditEntry` | `FORBIDDEN` |
+| `API-OPS-01: /ops/health` | `GET` | OPS | `Authorization` | None | `200 OK` `{"api": "UP", "db": "UP", "queue": "UP", "storage": "UP", "model": "UP"}` | `503 SERVICE_UNAVAILABLE` (jika komponen inti down) |
+| `API-OPS-02: /ops/jobs` | `GET` | OPS | `Authorization` | Query: `status`, `kind`, `page` | `200 OK` Paged List of `Job` (tersanitasi tanpa isi dokumen/finansial) | `FORBIDDEN` |
+| `API-OPS-03: /ops/jobs/{id}/retry` | `POST` | OPS | `Authorization`, `Idempotency-Key` | `{"reason": "Network timeout retry", "expected_attempt": 1}` | `202 Accepted` Resource `Job` | `JOB_NOT_FOUND`, `JOB_ALREADY_SUCCEEDED` |
+
+---
 
 ## Error dan versioning
-```json
-{"error":{"code":"STALE_RUN","message":"Hasil berubah. Muat ulang sebelum mencatat keputusan.","details":{"current_run_id":"00000000-0000-4000-8000-000000000001"}},"request_id":"00000000-0000-4000-8000-000000000002"}
-```
-400 INVALID_REQUEST; 401 UNAUTHENTICATED; 403 FORBIDDEN/HUMAN_REQUIRED; 404 NOT_FOUND/FEATURE_DISABLED; 409 IDEMPOTENCY_CONFLICT/STALE_VERSION/STALE_RUN/INVALID_STATE/POLICY_UNRESOLVED; 410 EXPORT_EXPIRED; 413 FILE_TOO_LARGE; 415 UNSUPPORTED_MEDIA; 422 SCHEMA_INVALID/UNREADABLE_DOCUMENT/UNSAFE_FILE; 429 RATE_LIMITED; 503 SERVICE_UNAVAILABLE. Error tidak menyalin isi dokumen/model response. Retryable response menyertakan Retry-After; limit retry konfigurasi Q-009.
 
-Contoh data sintetis untuk response validation (envelope ringkas):
+### Format Respons Error Standar (RFC 7807 Terstruktur)
+Setiap respons kegagalan (HTTP 4xx dan 5xx) WAJIB mengembalikan envelope JSON berikut:
 ```json
-{"data":{"id":"00000000-0000-4000-8000-000000000003","case_id":"00000000-0000-4000-8000-000000000004","status":"COMPLETED","overall_status":"NEEDS_REVIEW","rules_snapshot":[{"code":"TOTAL_COMPARE","rule_version":1,"params":{"tolerance":"0"}}],"extraction_ids":["00000000-0000-4000-8000-000000000005"],"results":[{"id":"00000000-0000-4000-8000-000000000006","rule_code":"TOTAL_COMPARE","rule_version":1,"outcome":"FAIL","reason_code":"TOTAL_DIFF","reasoning":"Nilai total pada invoice dan PO berbeda; periksa sumber.","computed_values":{"invoice_total":"110000000","po_total":"100000000","difference":"10000000"},"evidence":[{"id":"00000000-0000-4000-8000-000000000007","extraction_id":"00000000-0000-4000-8000-000000000005","document_id":"00000000-0000-4000-8000-000000000008","page_number":1,"field_path":"total_amount","value":"110000000","bbox":null}]}],"finished_at":"2026-10-27T00:00:00Z"},"request_id":"00000000-0000-4000-8000-000000000009"}
+{
+  "error": {
+    "code": "STALE_RUN",
+    "message": "Hasil validasi telah berubah. Muat ulang halaman sebelum mencatat keputusan.",
+    "details": {
+      "current_run_id": "33333333-3333-4000-8000-333333333333"
+    }
+  },
+  "request_id": "99999999-9999-4000-8000-999999999999"
+}
 ```
-Nilai toleransi contoh bukan rule PT SIS. Produksi setiap perbandingan memiliki evidence kedua sumber atau explicit missing source. Perubahan breaking ke `/api/v2`; additive nullable field backward compatible, client mengabaikan response unknown fields. Uji kontrak mengikuti [TESTING](TESTING.md); implementasi di [IMPLEMENTATION](IMPLEMENTATION.md).
+
+### Katalog Error Terpusat:
+| HTTP Status | Kode Error (`error.code`) | Deskripsi Masalah | Tindakan Klien |
+|:---:|---|---|---|
+| **400** | `INVALID_REQUEST` | Parameter request tidak memenuhi format dasar | Perbaiki format data |
+| **401** | `UNAUTHENTICATED` | Token kedaluwarsa, tidak ada, atau tanda tangan tidak sah | Login ulang untuk mendapat token baru |
+| **403** | `FORBIDDEN` | Peran pengguna tidak memiliki hak akses aksi ini | Hubungi Admin untuk eskalasi peran |
+| **403** | `HUMAN_REQUIRED` | Aksi pencatatan keputusan dicoba oleh service token/AI | Akses hanya boleh melalui manusia berwenang |
+| **404** | `NOT_FOUND` | Entitas yang diminta tidak ditemukan dalam tenant aktif | Verifikasi UUID entitas |
+| **404** | `FEATURE_DISABLED` | Fitur credit/kuota dinonaktifkan pada skema On-Premise | Sembunyikan fitur pada deployment On-Premise |
+| **409** | `IDEMPOTENCY_CONFLICT` | Idempotency-Key sama digunakan dengan payload berbeda | Gunakan UUID idempotensi baru |
+| **409** | `STALE_VERSION` | Versi entitas telah berubah di server (concurrency conflict) | Ambil data terbaru dan kirim ulang |
+| **409** | `STALE_RUN` | Hasil validasi telah diperbarui oleh run baru | Muat ulang sebelum review keputusan |
+| **409** | `INVALID_STATE` | Status entitas tidak mengizinkan operasi yang diminta | Periksa diagram state machine |
+| **409** | `POLICY_UNRESOLVED` | Operasi komersial billable diblokir karena kebijakan belum disepakati | Tunggu penyelesaian Discovery |
+| **410** | `EXPORT_EXPIRED` | Berkas ekspor telah melewati batas retensi TTL | Buat permohonan ekspor baru |
+| **413** | `FILE_TOO_LARGE` | Berkas melebihi batas ukuran (maksimal 50 MB) | Kompres atau pisahkan berkas |
+| **415** | `UNSUPPORTED_MEDIA` | Format MIME bukan PDF/PNG/JPEG | Unggah dalam format yang diizinkan |
+| **422** | `UNREADABLE_DOCUMENT` | PDF terenkripsi sandi atau file corrupt tidak bisa dibaca | Buka proteksi berkas sebelum unggah |
+| **422** | `UNSAFE_FILE` | Berkas terdeteksi mengandung konten berbahaya / malware | Karantina dan periksa berkas |
+| **422** | `PAGE_LIMIT_EXCEEDED` | Jumlah halaman berkas melebihi batas (maksimal 150 halaman) | Pisahkan berkas menjadi bagian lebih kecil |
+| **429** | `RATE_LIMITED` | Batas kecepatan request terlampaui | Tunggu sesuai header `Retry-After` |
+| **503** | `SERVICE_UNAVAILABLE` | Komponen database atau antrean sedang down | Coba kembali beberapa saat lagi |
+
+---
+
+## OpenAPI 3.1 Spesifikasi Ringkas (YAML)
+
+```yaml
+openapi: 3.1.0
+info:
+  title: SIS AI Invoice Intelligence Platform REST API
+  version: 1.0.0
+  description: Kontrak REST API untuk ekstraksi, validasi silang, dan review invoice PT SIS.
+paths:
+  /cases:
+    post:
+      summary: Membuat Case baru untuk bundel invoice
+      operationId: createCase
+      responses:
+        '201':
+          description: Case berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Case'
+    get:
+      summary: Mengambil daftar case terpaginasi
+      operationId: listCases
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 25
+      responses:
+        '200':
+          description: Daftar case
+  /cases/{id}/decisions:
+    post:
+      summary: Approver manusia mencatat keputusan peninjauan
+      operationId: recordDecision
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [run_id, expected_case_version, decision, note]
+              properties:
+                run_id: { type: string, format: uuid }
+                expected_case_version: { type: integer }
+                decision: { type: string, enum: [ACCEPTED, REJECTED, NEEDS_CLARIFICATION] }
+                note: { type: string }
+      responses:
+        '201':
+          description: Catatan keputusan berhasil disimpan
+        '403':
+          description: Ditolak jika bukan Approver manusia
+components:
+  schemas:
+    Case:
+      type: object
+      required: [id, case_number, processing_status, total_pages, version, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        case_number: { type: string }
+        processing_status: { type: string, enum: [UPLOADED, PROCESSING, EXTRACTED, VALIDATED, FAILED] }
+        validation_status: { type: [string, "null"], enum: [MATCHED, NEEDS_REVIEW, INCOMPLETE, DUPLICATE_SUSPECT, null] }
+        total_pages: { type: integer }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+```
